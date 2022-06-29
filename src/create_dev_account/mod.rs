@@ -1,14 +1,35 @@
+use ed25519_dalek::Keypair;
+use rand::{rngs::OsRng, Rng};
 use std::{
     collections::HashMap,
+    fmt,
+    str::FromStr,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use ed25519_dalek::Keypair;
-use rand::{rngs::OsRng, Rng};
+use near_crypto::{PublicKey, SecretKey};
+use near_primitives::types::AccountId;
+
+#[derive(Debug, Clone)]
+pub struct Account {
+    pub account_id: AccountId,
+    pub public_key: PublicKey,
+    pub secret_key: SecretKey,
+}
 
 struct StringifyKeypair {
     public: String,
     secret: String,
+}
+
+impl fmt::Display for Account {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "AccountID: {}\nPublic Key: {}\nPrivate Key: {}",
+            self.account_id, self.public_key, self.secret_key
+        )
+    }
 }
 
 fn generate_keypair() -> StringifyKeypair {
@@ -38,7 +59,7 @@ fn generate_accound_id() -> String {
     format!("dev-{}-{}", epoch_time, random_number)
 }
 
-pub async fn process() {
+pub async fn process() -> Account {
     let account_id = generate_accound_id();
     let keypair = generate_keypair();
 
@@ -49,11 +70,29 @@ pub async fn process() {
     data.insert("newAccountPublicKey", keypair.public.clone());
 
     let client = reqwest::Client::new();
-    let res = client.post(helper_url).json(&data).send().await.unwrap();
+    match client.post(helper_url).json(&data).send().await {
+        Ok(result) => result,
+        Err(err) => panic!("{}", err),
+    };
 
-    println!("{:?}", res);
+    let parsed_account_id: AccountId = match account_id.parse() {
+        Ok(result) => result,
+        Err(err) => panic!("{}", err),
+    };
 
-    println!("accountId: {}", account_id);
-    println!("public key: {}", keypair.public);
-    println!("secret key: {}", keypair.secret);
+    let parsed_public_key = match PublicKey::from_str(&keypair.public) {
+        Ok(result) => result,
+        Err(err) => panic!("{}", err),
+    };
+
+    let parsed_secret_key = match SecretKey::from_str(&keypair.secret) {
+        Ok(result) => result,
+        Err(err) => panic!("{}", err),
+    };
+
+    Account {
+        account_id: parsed_account_id,
+        public_key: parsed_public_key,
+        secret_key: parsed_secret_key,
+    }
 }

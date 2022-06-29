@@ -17,8 +17,7 @@ ed25519-dalek = "1.0.1"
 reqwest = { version = "0.11.11", features = ["json"] }
 tokio = { version = "1.19.2", features = ["macros", "rt-multi-thread"] }
 
-near-crypto = "0.14.0"
-near-primitives = "0.14.0"
-near-chain-configs = "0.14.0"
-near-jsonrpc-primitives = "0.14.0"
+near-crypto = "0.11.0"
+near-primitives = "0.11.0"
+near-jsonrpc-primitives = "0.11.0"
 near-jsonrpc-client = "0.2.0"

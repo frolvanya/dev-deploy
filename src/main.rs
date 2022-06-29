@@ -3,6 +3,8 @@ mod deploy;
 
 #[tokio::main]
 async fn main() {
-    create_dev_account::process().await;
-    deploy::process().await;
+    let account_info = create_dev_account::process().await;
+    println!("{}", account_info);
+
+    deploy::process(account_info).await.unwrap();
 }
