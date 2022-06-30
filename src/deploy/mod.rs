@@ -2,6 +2,8 @@ use near_jsonrpc_client::methods::tx::TransactionInfo;
 use near_jsonrpc_client::{methods, JsonRpcClient};
 use near_primitives::transaction::{Action, DeployContractAction};
 
+use near_jsonrpc_primitives::types::query::QueryResponseKind;
+use near_primitives::types::BlockReference;
 use tokio::time;
 
 use crate::create_dev_account;
@@ -22,19 +24,47 @@ pub(crate) async fn process(
         account_info.secret_key.clone(),
     );
 
-    let code = std::fs::read(utils::input("Enter the file location of the contract: ")?)?;
+    // let code = std::fs::read(utils::input("Enter the file location of the contract: ")?)?;
 
-    let transaction = near_primitives::transaction::Transaction {
+    let code = std::fs::read("res/linkdrop.wasm")?;
+
+    // let unsigned_transaction = near_primitives::transaction::Transaction {
+    //     signer_id: "test".parse().unwrap(),
+    //     public_key: near_crypto::PublicKey::empty(near_crypto::KeyType::ED25519),
+    //     nonce: 0,
+    //     receiver_id: "test".parse().unwrap(),
+    //     block_hash: Default::default(),
+    //     actions: vec![near_primitives::transaction::Action::DeployContract(
+    //         near_primitives::transaction::DeployContractAction { code },
+    //     )],
+    // };
+
+    let access_key_query_response = client
+        .call(methods::query::RpcQueryRequest {
+            block_reference: BlockReference::latest(),
+            request: near_primitives::views::QueryRequest::ViewAccessKey {
+                account_id: signer.account_id.clone(),
+                public_key: signer.public_key.clone(),
+            },
+        })
+        .await?;
+
+    let current_nonce = match access_key_query_response.kind {
+        QueryResponseKind::AccessKey(access_key) => access_key.nonce,
+        _ => Err("failed to extract current nonce")?,
+    };
+
+    let unsigned_transaction = near_primitives::transaction::Transaction {
         signer_id: account_info.account_id.clone(),
         public_key: account_info.public_key.clone(),
-        nonce: 0,
+        nonce: current_nonce,
         receiver_id: account_info.account_id.clone(),
-        block_hash: Default::default(),
+        block_hash: access_key_query_response.block_hash,
         actions: vec![Action::DeployContract(DeployContractAction { code })],
     };
 
     let request = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
-        signed_transaction: transaction.sign(&signer),
+        signed_transaction: unsigned_transaction.sign(&signer),
     };
 
     let sent_at = time::Instant::now();
@@ -45,10 +75,13 @@ pub(crate) async fn process(
             .call(methods::tx::RpcTransactionStatusRequest {
                 transaction_info: TransactionInfo::TransactionId {
                     hash: tx_hash,
-                    account_id: signer.account_id.clone(),
+                    account_id: account_info.account_id.clone(),
                 },
             })
             .await;
+
+        println!("{:?}", response);
+
         let received_at = time::Instant::now();
         let delta = (received_at - sent_at).as_secs();
 
