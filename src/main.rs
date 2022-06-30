@@ -7,13 +7,13 @@ mod deploy;
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// Smart contract path
-    #[clap(short, long, value_parser)]
-    file: String,
+    #[clap(long, value_parser)]
+    wasm_file: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let contract_path = Args::parse().file;
+    let contract_path = Args::parse().wasm_file;
 
     let account_info = match create_dev_account::process().await {
         Ok(info) => info,
