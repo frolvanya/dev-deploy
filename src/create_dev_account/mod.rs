@@ -1,6 +1,7 @@
 use anyhow::Result;
 use near_primitives::types::AccountId;
 use rand::{rngs::OsRng, Rng};
+use serde_json::json;
 use std::{
     collections::HashMap,
     fmt,
@@ -87,6 +88,23 @@ pub(crate) async fn process() -> Result<Account> {
         Ok(result) => result,
         Err(err) => return Err(anyhow::anyhow!(err)),
     };
+
+    let json_account_info = json!({"account_id": account_id.clone(), "public_key": keypair.public.clone(), "private_key": keypair.secret.clone()});
+    let stringify_json_account_info = match serde_json::to_string_pretty(&json_account_info) {
+        Ok(result) => result,
+        Err(err) => return Err(anyhow::anyhow!(err)),
+    };
+
+    if std::path::Path::new("neardev/").exists() {
+        std::fs::remove_dir_all("neardev/").unwrap();
+    }
+
+    std::fs::create_dir("neardev/").unwrap();
+    std::fs::write(
+        format!("neardev/{}.json", account_id),
+        stringify_json_account_info,
+    )
+    .unwrap();
 
     Ok(Account {
         account_id: parsed_account_id,
