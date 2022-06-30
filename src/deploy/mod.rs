@@ -1,102 +1,84 @@
-use near_jsonrpc_client::methods::tx::TransactionInfo;
-use near_jsonrpc_client::{methods, JsonRpcClient};
-use near_primitives::transaction::{Action, DeployContractAction};
-
-use near_jsonrpc_primitives::types::query::QueryResponseKind;
-use near_primitives::types::BlockReference;
-use tokio::time;
-
 use crate::create_dev_account;
 
-mod utils;
+use anyhow::Result;
 
 pub(crate) async fn process(
     account_info: create_dev_account::Account,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let client = JsonRpcClient::connect("https://rpc.testnet.near.org");
-
-    // let signer_account_id = utils::input("Enter the signer Account ID: ")?.parse()?;
-    // let signer_public_key = utils::input("Enter the signer's public key: ")?;
-    // let signer_secret_key = utils::input("Enter the signer's private key: ")?.parse()?;
+    contract_path: String,
+) -> Result<()> {
+    let client = near_jsonrpc_client::JsonRpcClient::connect("https://rpc.testnet.near.org");
 
     let signer = near_crypto::InMemorySigner::from_secret_key(
         account_info.account_id.clone(),
         account_info.secret_key.clone(),
     );
 
-    // let code = std::fs::read(utils::input("Enter the file location of the contract: ")?)?;
+    let code = match std::fs::read(contract_path.clone()) {
+        Ok(result) => result,
+        Err(err) => return Err(anyhow::anyhow!(err)),
+    };
 
-    let code = std::fs::read("res/linkdrop.wasm")?;
+    println!("Starting deployment. Account ID: {}, node: https://rpc.testnet.near.org, helper: https://helper.testnet.near.org, file: {}\n", account_info.account_id, contract_path);
 
-    // let unsigned_transaction = near_primitives::transaction::Transaction {
-    //     signer_id: "test".parse().unwrap(),
-    //     public_key: near_crypto::PublicKey::empty(near_crypto::KeyType::ED25519),
-    //     nonce: 0,
-    //     receiver_id: "test".parse().unwrap(),
-    //     block_hash: Default::default(),
-    //     actions: vec![near_primitives::transaction::Action::DeployContract(
-    //         near_primitives::transaction::DeployContractAction { code },
-    //     )],
-    // };
-
-    let access_key_query_response = client
-        .call(methods::query::RpcQueryRequest {
-            block_reference: BlockReference::latest(),
+    let access_key_query_response = match client
+        .call(near_jsonrpc_client::methods::query::RpcQueryRequest {
+            block_reference: near_primitives::types::BlockReference::latest(),
             request: near_primitives::views::QueryRequest::ViewAccessKey {
                 account_id: signer.account_id.clone(),
                 public_key: signer.public_key.clone(),
             },
         })
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => return Err(anyhow::anyhow!(err)),
+    };
 
     let current_nonce = match access_key_query_response.kind {
-        QueryResponseKind::AccessKey(access_key) => access_key.nonce,
-        _ => Err("failed to extract current nonce")?,
+        near_jsonrpc_primitives::types::query::QueryResponseKind::AccessKey(access_key) => {
+            access_key.nonce
+        }
+        _ => return Err(anyhow::anyhow!("failed to extract current nonce")),
     };
 
     let unsigned_transaction = near_primitives::transaction::Transaction {
         signer_id: account_info.account_id.clone(),
         public_key: account_info.public_key.clone(),
-        nonce: current_nonce,
+        nonce: current_nonce + 1,
         receiver_id: account_info.account_id.clone(),
         block_hash: access_key_query_response.block_hash,
-        actions: vec![Action::DeployContract(DeployContractAction { code })],
+        actions: vec![near_primitives::transaction::Action::DeployContract(
+            near_primitives::transaction::DeployContractAction { code },
+        )],
     };
 
-    let request = methods::broadcast_tx_async::RpcBroadcastTxAsyncRequest {
+    let request = near_jsonrpc_client::methods::broadcast_tx_commit::RpcBroadcastTxCommitRequest {
         signed_transaction: unsigned_transaction.sign(&signer),
     };
 
-    let sent_at = time::Instant::now();
-    let tx_hash = client.call(request).await?;
+    let response = match client.call(request).await {
+        Ok(result) => result,
+        Err(_) => return Err(anyhow::anyhow!("failed to extract current nonce")),
+    };
 
-    loop {
-        let response = client
-            .call(methods::tx::RpcTransactionStatusRequest {
-                transaction_info: TransactionInfo::TransactionId {
-                    hash: tx_hash,
-                    account_id: account_info.account_id.clone(),
-                },
-            })
-            .await;
-
-        println!("{:?}", response);
-
-        let received_at = time::Instant::now();
-        let delta = (received_at - sent_at).as_secs();
-
-        if delta > 60 {
-            Err("time limit exceeded for the transaction to be recognized")?;
+    match response.status {
+        near_primitives::views::FinalExecutionStatus::NotStarted => {
+            println!("Deployment doesn't started")
         }
-
-        match response {
-            Err(err) => panic!("{}", err),
-            Ok(response) => {
-                println!("response gotten after: {}s", delta);
-                println!("response: {:#?}", response);
-                break;
-            }
+        near_primitives::views::FinalExecutionStatus::Started => {
+            println!("Starting deploying to {}", account_info.account_id)
         }
+        near_primitives::views::FinalExecutionStatus::Failure(_) => {
+            println!("Failed deploying to {}", account_info.account_id)
+        }
+        near_primitives::views::FinalExecutionStatus::SuccessValue(_) => println!(
+            "Transaction ID: {0}
+To see the transaction in the transaction explorer, please open this url in your browser
+https://explorer.testnet.near.org/transactions/{0}
+
+Done deploying to {1}",
+            response.transaction.hash, account_info.account_id
+        ),
     }
 
     Ok(())

@@ -1,4 +1,5 @@
-use ed25519_dalek::Keypair;
+use anyhow::Result;
+use near_primitives::types::AccountId;
 use rand::{rngs::OsRng, Rng};
 use std::{
     collections::HashMap,
@@ -7,14 +8,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use near_crypto::{PublicKey, SecretKey};
-use near_primitives::types::AccountId;
-
 #[derive(Debug, Clone)]
-pub struct Account {
-    pub account_id: AccountId,
-    pub public_key: PublicKey,
-    pub secret_key: SecretKey,
+pub(crate) struct Account {
+    pub(crate) account_id: near_primitives::types::AccountId,
+    pub(crate) public_key: near_crypto::PublicKey,
+    pub(crate) secret_key: near_crypto::SecretKey,
 }
 
 struct StringifyKeypair {
@@ -26,7 +24,7 @@ impl fmt::Display for Account {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "AccountID: {}\nPublic Key: {}\nPrivate Key: {}",
+            "AccountID: {}\nPublic Key: {}\nPrivate Key: {}\n",
             self.account_id, self.public_key, self.secret_key
         )
     }
@@ -34,7 +32,7 @@ impl fmt::Display for Account {
 
 fn generate_keypair() -> StringifyKeypair {
     let mut csprng = OsRng {};
-    let keypair: Keypair = Keypair::generate(&mut csprng);
+    let keypair = ed25519_dalek::Keypair::generate(&mut csprng);
 
     let public_key_str = format!("ed25519:{}", bs58::encode(&keypair.public).into_string());
     let secret_keypair_str = format!(
@@ -59,11 +57,11 @@ fn generate_accound_id() -> String {
     format!("dev-{}-{}", epoch_time, random_number)
 }
 
-pub async fn process() -> Account {
+pub(crate) async fn process() -> Result<Account> {
+    let helper_url = "https://helper.nearprotocol.com/account";
+
     let account_id = generate_accound_id();
     let keypair = generate_keypair();
-
-    let helper_url = "https://helper.nearprotocol.com/account";
 
     let mut data = HashMap::new();
     data.insert("newAccountId", account_id.clone());
@@ -72,27 +70,27 @@ pub async fn process() -> Account {
     let client = reqwest::Client::new();
     match client.post(helper_url).json(&data).send().await {
         Ok(result) => result,
-        Err(err) => panic!("{}", err),
+        Err(err) => return Err(anyhow::anyhow!(err)),
     };
 
-    let parsed_account_id: AccountId = match account_id.parse() {
+    let parsed_account_id = match account_id.parse::<AccountId>() {
         Ok(result) => result,
-        Err(err) => panic!("{}", err),
+        Err(err) => return Err(anyhow::anyhow!(err)),
     };
 
-    let parsed_public_key = match PublicKey::from_str(&keypair.public) {
+    let parsed_public_key = match near_crypto::PublicKey::from_str(&keypair.public) {
         Ok(result) => result,
-        Err(err) => panic!("{}", err),
+        Err(err) => return Err(anyhow::anyhow!(err)),
     };
 
-    let parsed_secret_key = match SecretKey::from_str(&keypair.secret) {
+    let parsed_secret_key = match near_crypto::SecretKey::from_str(&keypair.secret) {
         Ok(result) => result,
-        Err(err) => panic!("{}", err),
+        Err(err) => return Err(anyhow::anyhow!(err)),
     };
 
-    Account {
+    Ok(Account {
         account_id: parsed_account_id,
         public_key: parsed_public_key,
         secret_key: parsed_secret_key,
-    }
+    })
 }
